@@ -200,38 +200,25 @@ UPDATE precioBase SET checksum=SHA2(CONCAT(productoID, precio), 256);
 UPDATE precioPorPlaya SET checksum=SHA2(CONCAT(playaID, productoID, precio), 256);
 -- Checksum ventas
 
-INSERT INTO coperosystem.coperosXplaya (playaID, coperoID) 
-VALUES (1, 1), (1, 2), (1, 3), (2, 4), (2, 5), (2, 6), (3, 7), (3, 8), (3, 9), (1, 10), (1, 11), (1, 12), (2, 13), (2, 14), (2, 15), (3, 16), (3, 17), (3, 18), (1, 19), (1, 20), (1, 21), (2, 22), (2, 23), (2, 24), (3, 25), (3, 26), (3, 27), (1, 28), (1, 29), (1, 30);
-
-INSERT INTO coperosystem.carritosXplaya (playaID, carritoID) 
-VALUES (1, 1), (1, 2), (2, 3), (2, 4), (3, 5), (3, 6), (1, 7), (1, 8), (2, 9), (2, 10), (3, 11), (3, 12), (1, 13), (2, 14), (3, 15);
-
 INSERT INTO checkTypes (checkTypeName) values 
 ('apertura'), ('cierre'), ('cambioTurno');
 
 INSERT INTO checkStatuses (statusName)
 VALUES ('correcto'), ('diferenteAceptado'), ('diferenciaRechazado');
 
-CREATE VIEW totalIngredientsByCarrito AS
-SELECT 
-    carritos.carritoID AS carritoID,
-    ingredientes.ingredienteID AS ingredienteID,
-    SUM(InventoryLogs.quantity) AS totalQuantity
-FROM 
-    coperosystem.inventoryLogs
-    INNER JOIN coperosystem.carritos ON inventoryLogs.carritoID = carritos.carritoID
-    INNER JOIN coperosystem.ingredientes ON inventoryLogs.ingredientesID = ingredientes.ingredienteID
-WHERE 
-    carritos.enable = 1
-    AND ingredientes.enable = 1
-GROUP BY 
-    carritos.carritoID, 
-    ingredientes.ingredienteID;
+
     
 create table tmpShifts (
     coperoID INT,
     carritoID INT,
     playaID INT
+);
+
+DROP TABLE IF EXISTS tmpOrder;
+create table tmpOrder (
+	ordergroup VARCHAR(36),
+    productoID INT,
+    cantidad INT
 );
 
 insert into tmpShifts(coperoID, carritoID, playaID)

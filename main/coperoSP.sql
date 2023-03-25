@@ -2,7 +2,7 @@
 DROP PROCEDURE IF EXISTS RegistrarVenta;
 DELIMITER $$
 CREATE PROCEDURE RegistrarVenta(IN pturnoID INT, IN pfechaVenta DATETIME, 
-IN pcomisionID INT, IN ptipopago TINYINT, IN ppago INT, IN psolicitudID INT)
+IN pcomisionID INT, IN ptipopago TINYINT, IN ppago INT, IN pordergroup VARCHAR(36))
 BEGIN
 	-- Variables del pago
 	DECLARE comisionTotal FLOAT;
@@ -15,7 +15,6 @@ BEGIN
     DECLARE playa INT;
     
     DECLARE INVALID_COMISSION INT DEFAULT(53000);
-	DECLARE INVALID_REQUEST INT DEFAULT(53001);
     DECLARE INVALID_SHIFT_PLAYA INT DEFAULT(53002);
     DECLARE INVALID_SHIFT_CARRITO INT DEFAULT(53003);
     DECLARE INVALID_SHIFT_COPERO INT DEFAULT(53004);
@@ -35,29 +34,46 @@ BEGIN
         ROLLBACK;
         
         RESIGNAL SET MESSAGE_TEXT = @message;
-	END; -- *******************
+	END;-- *******************
     
-    -- Busqueda del copero y del carrito correspondientes al turno 
-	SELECT IFNULL(co.coperoID, -1), IFNULL(ca.carritoID, -1), IFNULL(p.playaID, -1)
-	INTO copero, carrito, playa
-	FROM turnos t
-	JOIN coperos co ON t.coperoID = co.coperoID
-	JOIN carritos ca ON t.carritoID = ca.carritoID
-    JOIN playas p ON t.playaID = p.playaID 
-	WHERE t.turnoID = pturnoID;
+SELECT 
+    IFNULL(co.coperoID, - 1),
+    IFNULL(ca.carritoID, - 1),
+    IFNULL(p.playaID, - 1)
+INTO copero , carrito , playa FROM
+    turnos t
+        JOIN
+    coperos co ON t.coperoID = co.coperoID
+        JOIN
+    carritos ca ON t.carritoID = ca.carritoID
+        JOIN
+    playas p ON t.playaID = p.playaID
+WHERE
+    t.turnoID = pturnoID;
     
 	-- Calculo del precio total
-	SELECT SUM(COALESCE(precioPorPlaya.precio, precioBase.precio) * pxv.cantidad)
-    INTO precioTotal
-	FROM produsxventa pxv
-	LEFT JOIN preciobase ON pxv.productoID = preciobase.productoID AND precioBase.active = 1
-	LEFT JOIN precioPorPlaya ON pxv.productoID = precioPorPlaya.productoID AND precioPorPlaya.active = 1 AND precioPorPlaya.playaID = playa
-	WHERE solicitudVentaID = psolicitudID;
+	SELECT 
+    SUM(COALESCE(precioPorPlaya.precio, precioBase.precio) * og.cantidad)
+INTO precioTotal FROM
+    tmporder og
+        LEFT JOIN
+    preciobase ON og.productoID = preciobase.productoID
+        AND precioBase.active = 1
+        LEFT JOIN
+    precioPorPlaya ON og.productoID = precioPorPlaya.productoID
+        AND precioPorPlaya.active = 1
+        AND precioPorPlaya.playaID = playa
+WHERE
+    og.ordergroup = pordergroup;
     
     
     -- Calculo del pago y del vuelto segun metodo de pago
-	SELECT porcentaje * precioTotal FROM comisiones WHERE comisionID = pcomisionID 
-    INTO comisionTotal;
+	SELECT 
+    porcentaje * precioTotal
+FROM
+    comisiones
+WHERE
+    comisionID = pcomisionID INTO comisionTotal;
     
 	IF (comisionTotal IS NULL) THEN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_COMISSION,
@@ -83,23 +99,20 @@ BEGIN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_PLAYA, MESSAGE_TEXT = 'Error de TURNO: pla7ya inválido ';
 	END IF;
     
-	IF (psolicitudID IS NULL) THEN
-		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_REQUEST, MESSAGE_TEXT = 'Error de Solicitud: solicitud inexistente';
-	END IF;
-    
         SET autocommit = 0;
 		START TRANSACTION;
 			    -- Creacion de los logs
 			INSERT INTO inventoryLogs(posttime,operationType,quantity,ingredientesID,createdAt, computer, username, carritoID) 
-			SELECT pfechaVenta, 0, ixp.cantidad * -1 * pxv.cantidad, ixp.ingredienteID, pfechaVenta, 'computer1', 'user1', carrito
-			FROM produsxventa pxv
-			INNER JOIN ingreXProdu ixp ON pxv.productoID = ixp.productoID 
-			WHERE solicitudVentaID = psolicitudID;
+			SELECT pfechaVenta, 0, ixp.cantidad * -1 * og.cantidad, ixp.ingredienteID, pfechaVenta, 'computer1', 'user1', carrito
+			FROM tmporder og
+			INNER JOIN ingreXProdu ixp ON og.productoID = ixp.productoID 
+			WHERE og.ordergroup = pordergroup;
     
     -- Registro de la venta 
-			INSERT INTO Ventas (posttime, tipopago, monto, vuelto, comisionID, coperoID, carritoID, playaID, solicitudVentaID, montoComision, createdAt, computer, username)
-			VALUES (pfechaVenta, ptipopago, precioTotal, vuelto1, pcomisionID, copero, carrito, playa, psolicitudID, comisionTotal, pfechaVenta, "computer1", "user1");
+			INSERT INTO Ventas (posttime, tipopago, monto, vuelto, comisionID, coperoID, carritoID, playaID,  ordergroup, montoComision, createdAt, computer, username)
+			VALUES (pfechaVenta, ptipopago, precioTotal, vuelto1, pcomisionID, copero, carrito, playa, pordergroup, comisionTotal, pfechaVenta, "computer1", "user1");
 END$$
+DELIMITER ;
 
 
 
@@ -115,6 +128,7 @@ BEGIN
 	WHERE carritoID = pcarritoID AND ixc.totalQuantity < i.stack * 0.3;
                 
 END$$
+DELIMITER ;
 
 DROP PROCEDURE IF EXISTS RegistrarOpen;
 DELIMITER $$
@@ -126,6 +140,7 @@ BEGIN
 	FROM ingredientes, carritos
     WHERE carritoID = pcarritoID;
 END$$
+DELIMITER ;
 
 
 DROP PROCEDURE IF EXISTS RegistrarClose;
@@ -138,6 +153,7 @@ BEGIN
 	FROM totalIngredientsByCarrito 
     WHERE carritoID = pcarritoID;
 END$$
+DELIMITER ;
 
 
 
@@ -162,18 +178,19 @@ BEGIN
 				WHERE carritoID = vcarritoID 
 				AND horaInicio IN (inicioAM, inicioPM)) = 2 THEN 
 				-- REGISTRAR CAMBIO
-                SELECT coperoID, turnoID FROM turnos 
-                WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
-                ORDER BY coperoID DESC
-                LIMIT 1
-                INTO vcoperoID1, vturnoID;
+                -- SELECT coperoID, turnoID FROM turnos 
+                -- WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
+                -- ORDER BY coperoID DESC
+                -- LIMIT 1
+                -- INTO vcoperoID1, vturnoID;
                 
-                INSERT INTO cajacheck(fecha,checkTypeID,checkStatusID,coperoID1,coperoID2,turnoID,createdAt,computer,username)
-                SELECT inicioPM, 1, 3, vcoperoID1, t.coperoID, vturnoID, inicioPM, 'computer1', 'user1'
-                FROM turnos t
-                WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
-                ORDER BY coperoID 
-                LIMIT 1;
+                -- INSERT INTO cajacheck(fecha,checkTypeID,checkStatusID,coperoID1,coperoID2,turnoID,createdAt,computer,username)
+                -- SELECT inicioPM, 1, 3, vcoperoID1, t.coperoID, vturnoID, inicioPM, 'computer1', 'user1'
+                -- FROM turnos t
+                -- WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
+                -- ORDER BY coperoID 
+                -- LIMIT 1;
+                delete FROM cajacheck;
                
 			ELSEIF (SELECT COUNT(*) 
 				FROM turnos 
@@ -188,6 +205,7 @@ BEGIN
 	CLOSE cur;
     
 END$$
+DELIMITER ;
 
 
 DROP PROCEDURE IF EXISTS generarTurnos;
@@ -205,6 +223,7 @@ BEGIN
 	LIMIT 3;
 		
 END$$
+DELIMITER ;
 
 DROP PROCEDURE IF EXISTS Cierre;
 DELIMITER $$
@@ -226,6 +245,7 @@ BEGIN
     CLOSE cur;
     
 END$$
+DELIMITER ;
 
 DROP PROCEDURE IF EXISTS Apertura;
 DELIMITER $$
@@ -247,7 +267,7 @@ BEGIN
     CLOSE cur;
     
 END$$
-
+DELIMITER ;
 
 DROP PROCEDURE IF EXISTS Llenado;
 DELIMITER $$
@@ -278,7 +298,7 @@ BEGIN
 		DECLARE var INT;
 	
         SET currentDate = startDate;
-        SET endDate = DATE_ADD(startDate, INTERVAL 6 MONTH);
+        SET endDate = DATE_ADD(startDate, INTERVAL 2 MONTH);
         
         WHILE DATE(currentDate) <= DATE(endDate) DO 
         
@@ -303,17 +323,15 @@ BEGIN
             WHILE ventasAM >= 0 DO
 				SET totalProdu = 0;
 				-- Genero una orden 
-                INSERT INTO solicitudVenta VALUES (NULL);
-                SELECT LAST_INSERT_ID() 
-                INTO ordenID;
+                SET @orden = UUID();
                 SET productosAComprar = FLOOR(RAND() * 3) + 1;
                 
 				-- Ciclo para elegir productos y sus cantidades
                 WHILE productosAComprar >= 0 DO
 					SET cantidadAComprar = FLOOR(RAND() * 2) + 1;
                     SET totalProdu = totalProdu + cantidadAComprar;
-					INSERT INTO produsxventa(productoID, solicitudVentaID, cantidad)
-					SELECT p.productoID, ordenID, cantidadAComprar
+					INSERT INTO tmporder(ordergroup, productoID, cantidad)
+					SELECT @orden,  p.productoID, cantidadAComprar
                     FROM copoproductos p 
                     ORDER BY RAND()
                     LIMIT 1;
@@ -334,7 +352,7 @@ BEGIN
 				END IF;
                 
                 -- Registro la venta y valido si hace falta refill
-                CALL RegistrarVenta(vturnoID, currenthora, 1, vtipopago, vpago, ordenID);
+                CALL RegistrarVenta(vturnoID, currenthora, 1, vtipopago, vpago,  @orden);
                 SELECT carritoID FROM turnos 
                 WHERE turnoID = vturnoID
                 INTO vcarritoID;
@@ -353,17 +371,15 @@ BEGIN
             WHILE ventasPM >= 0 DO
 				SET totalProdu = 0;
 				-- Genero una orden 
-                INSERT INTO solicitudVenta VALUES (NULL);
-                SELECT LAST_INSERT_ID() 
-                INTO ordenID;
-                SET productosAComprar = FLOOR(RAND() * 5) + 1;
+                SET @orden = UUID();
+                SET productosAComprar = FLOOR(RAND() * 3) + 1;
                 
 				-- Ciclo para elegir productos y sus cantidades
                 WHILE productosAComprar >= 0 DO
-					SET cantidadAComprar = FLOOR(RAND() * 4) + 1;
+					SET cantidadAComprar = FLOOR(RAND() * 2) + 1;
                     SET totalProdu = totalProdu + cantidadAComprar;
-					INSERT INTO produsxventa(productoID, solicitudVentaID, cantidad)
-					SELECT p.productoID, ordenID, cantidadAComprar
+					INSERT INTO tmporder(ordergroup, productoID, cantidad)
+					SELECT @orden,  p.productoID, cantidadAComprar
                     FROM copoproductos p 
                     ORDER BY RAND()
                     LIMIT 1;
@@ -385,7 +401,7 @@ BEGIN
 				END IF;
                 
                 -- Registro la venta y valido si hace falta refill
-                CALL RegistrarVenta(vturnoID, currenthora, 1, vtipopago, vpago, ordenID);
+                CALL RegistrarVenta(vturnoID, currenthora, 1, vtipopago, vpago,  @orden);
                 SELECT carritoID FROM turnos 
                 WHERE turnoID = vturnoID
                 INTO vcarritoID;
@@ -399,5 +415,22 @@ BEGIN
 
 		END WHILE;
 END$$
+DELIMITER ;
 
- 
+DROP VIEW IF EXISTS totalIngredientsByCarrito;
+CREATE VIEW totalIngredientsByCarrito AS
+    SELECT 
+        carritos.carritoID AS carritoID,
+        ingredientes.ingredienteID AS ingredienteID,
+        SUM(InventoryLogs.quantity) AS totalQuantity
+    FROM
+        coperosystem.inventoryLogs
+            INNER JOIN
+        coperosystem.carritos ON inventoryLogs.carritoID = carritos.carritoID
+            INNER JOIN
+        coperosystem.ingredientes ON inventoryLogs.ingredientesID = ingredientes.ingredienteID
+    WHERE
+        carritos.enable = 1
+            AND ingredientes.enable = 1
+    GROUP BY carritos.carritoID , ingredientes.ingredienteID;
+
