@@ -207,7 +207,20 @@ INSERT INTO checkStatuses (statusName)
 VALUES ('correcto'), ('diferenteAceptado'), ('diferenciaRechazado');
 
 
-    
+create table tmpInventoryData (
+	inventorygroup VARCHAR(36),
+    ingredienteID INT,
+    cantidad INT,
+    operationType TINYINT
+);
+
+-- operationtypes
+-- 0 = sale
+-- 1 = refill
+-- 2 = opening
+-- 3 = closing
+
+
 create table tmpShifts (
     coperoID INT,
     carritoID INT,

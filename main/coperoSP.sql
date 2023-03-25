@@ -1,18 +1,18 @@
 
+
+
+
+
+
 DROP PROCEDURE IF EXISTS RegistrarVenta;
 DELIMITER $$
-CREATE PROCEDURE RegistrarVenta(IN pturnoID INT, IN pfechaVenta DATETIME, 
+CREATE PROCEDURE RegistrarVenta(IN copero INT, IN carrito INT, IN playa INT, IN pfechaVenta DATETIME, 
 IN pcomisionID INT, IN ptipopago TINYINT, IN ppago INT, IN pordergroup VARCHAR(36))
 BEGIN
 	-- Variables del pago
 	DECLARE comisionTotal FLOAT;
     DECLARE precioTotal INT;
     DECLARE vuelto1 INT;
-    
-    -- Variables del turno
-    DECLARE copero INT;
-    DECLARE carrito INT;
-    DECLARE playa INT;
     
     DECLARE INVALID_COMISSION INT DEFAULT(53000);
     DECLARE INVALID_SHIFT_PLAYA INT DEFAULT(53002);
@@ -21,7 +21,7 @@ BEGIN
     
     
         
-   DECLARE EXIT HANDLER FOR SQLEXCEPTION -- *******************
+	DECLARE EXIT HANDLER FOR SQLEXCEPTION -- *******************
 	BEGIN
 		GET DIAGNOSTICS CONDITION 1 @err_no = MYSQL_ERRNO, @message = MESSAGE_TEXT;
         
@@ -35,173 +35,178 @@ BEGIN
         
         RESIGNAL SET MESSAGE_TEXT = @message;
 	END;-- *******************
-    
-SELECT 
-    IFNULL(co.coperoID, - 1),
-    IFNULL(ca.carritoID, - 1),
-    IFNULL(p.playaID, - 1)
-INTO copero , carrito , playa FROM
-    turnos t
-        JOIN
-    coperos co ON t.coperoID = co.coperoID
-        JOIN
-    carritos ca ON t.carritoID = ca.carritoID
-        JOIN
-    playas p ON t.playaID = p.playaID
-WHERE
-    t.turnoID = pturnoID;
-    
+		
 	-- Calculo del precio total
 	SELECT 
-    SUM(COALESCE(precioPorPlaya.precio, precioBase.precio) * og.cantidad)
-INTO precioTotal FROM
-    tmporder og
-        LEFT JOIN
-    preciobase ON og.productoID = preciobase.productoID
-        AND precioBase.active = 1
-        LEFT JOIN
-    precioPorPlaya ON og.productoID = precioPorPlaya.productoID
-        AND precioPorPlaya.active = 1
-        AND precioPorPlaya.playaID = playa
-WHERE
-    og.ordergroup = pordergroup;
-    
-    
-    -- Calculo del pago y del vuelto segun metodo de pago
-	SELECT 
-    porcentaje * precioTotal
-FROM
-    comisiones
-WHERE
-    comisionID = pcomisionID INTO comisionTotal;
-    
+		SUM(COALESCE(precioPorPlaya.precio, precioBase.precio) * og.cantidad)
+	INTO precioTotal FROM
+		tmporder og
+			LEFT JOIN
+		preciobase ON og.productoID = preciobase.productoID
+			AND precioBase.active = 1
+			LEFT JOIN
+		precioPorPlaya ON og.productoID = precioPorPlaya.productoID
+			AND precioPorPlaya.active = 1
+			AND precioPorPlaya.playaID = playa
+	WHERE
+		og.ordergroup = pordergroup;
+		
+		-- Calculo del pago y del vuelto segun metodo de pago
+		SELECT 
+		porcentaje * precioTotal
+	FROM
+		comisiones
+	WHERE
+		comisionID = pcomisionID INTO comisionTotal;
+		
 	IF (comisionTotal IS NULL) THEN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_COMISSION,
 		MESSAGE_TEXT = 'Error de comisión: valor inválido ingresado';
 	END IF;
-    
+	
 	IF (ptipopago > 0) THEN
 		SET ppago = precioTotal;
-        SET vuelto1 = 0;
+		SET vuelto1 = 0;
 	ELSE
 		SET vuelto1 = ppago - precioTotal;
 	END IF;
-    
+		
 	IF (copero IS NULL) THEN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_COPERO, MESSAGE_TEXT = 'Error de TURNO: copero inválido';
 	END IF;
-    
-    IF (carrito IS NULL) THEN
+		
+	IF (carrito IS NULL) THEN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_CARRITO, MESSAGE_TEXT = 'Error de TURNO: carrio inválido ';
 	END IF;
-    
-    IF (playa IS NULL) THEN
+		
+	IF (playa IS NULL) THEN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_PLAYA, MESSAGE_TEXT = 'Error de TURNO: pla7ya inválido ';
 	END IF;
     
-        SET autocommit = 0;
-		START TRANSACTION;
-			    -- Creacion de los logs
-			INSERT INTO inventoryLogs(posttime,operationType,quantity,ingredientesID,createdAt, computer, username, carritoID) 
-			SELECT pfechaVenta, 0, ixp.cantidad * -1 * og.cantidad, ixp.ingredienteID, pfechaVenta, 'computer1', 'user1', carrito
-			FROM tmporder og
-			INNER JOIN ingreXProdu ixp ON og.productoID = ixp.productoID 
-			WHERE og.ordergroup = pordergroup;
+    SET @inventorygroup = UUID();
+    INSERT INTO tmpinventorydata(inventorygroup, ingredienteID, cantidad, operationType)
+    SELECT @inventorygroup, ixp.ingredienteID, ixp.cantidad * -1 * og.cantidad, 0
+	FROM tmporder og
+	INNER JOIN ingreXProdu ixp ON og.productoID = ixp.productoID 
+	WHERE og.ordergroup = pordergroup;
     
+    CALL RegistrarInventoryLog(@inventorygroup, carrito, copero, pfechaVenta);
+    
+    SET autocommit = 0;
+	START TRANSACTION;
     -- Registro de la venta 
-			INSERT INTO Ventas (posttime, tipopago, monto, vuelto, comisionID, coperoID, carritoID, playaID,  ordergroup, montoComision, createdAt, computer, username)
-			VALUES (pfechaVenta, ptipopago, precioTotal, vuelto1, pcomisionID, copero, carrito, playa, pordergroup, comisionTotal, pfechaVenta, "computer1", "user1");
+	INSERT INTO Ventas (posttime, tipopago, monto, vuelto, comisionID, coperoID, carritoID, playaID,  ordergroup, montoComision, createdAt, computer, username)
+	VALUES (pfechaVenta, ptipopago, precioTotal, vuelto1, pcomisionID, copero, carrito, playa, pordergroup, comisionTotal, pfechaVenta, "computer1", "user1");
 END$$
 DELIMITER ;
 
 
+DROP PROCEDURE IF EXISTS RegistrarInventoryLog;
+DELIMITER $$
+CREATE PROCEDURE RegistrarInventoryLog(IN pInventoryGroup VARCHAR(36), IN pcarritoID INT, IN pcoperoID INT, IN pfecha DATETIME)
+BEGIN
+        
+	-- METER VALIDACIONES DE pInventoryGroup, coperoID, carritoID
+	-- Creacion de los logs
+	INSERT INTO inventoryLogs(posttime,operationType, quantity ,ingredientesID,createdAt, computer, username, carritoID, coperoID) 
+	SELECT pfecha, operationType, cantidad, ingredienteID, pfecha, 'computer1', 'user1', pcarritoID, pcoperoID
+	FROM tmpinventorydata
+	WHERE inventorygroup = pInventorygroup;
+    
+END$$
+DELIMITER ;
+
 
 DROP PROCEDURE IF EXISTS RegistrarRefill;
 DELIMITER $$
-CREATE PROCEDURE RegistrarRefill(IN pcarritoID INT, IN pfechaVenta DATETIME)
+CREATE PROCEDURE RegistrarRefill(IN copero INT, IN carrito INT, IN pfecha DATETIME)
 BEGIN
 
-	INSERT INTO inventoryLogs(posttime,operationType,quantity,ingredientesID,createdAt, computer, username, carritoID) 
-	SELECT pfechaVenta, 1, stack, ixc.ingredienteID, pfechaVenta, 'computer1', 'user1', carritoID 
+	SET @inventorygroup = UUID();
+	INSERT INTO tmpinventorydata(inventorygroup, ingredienteID, cantidad, operationType) 
+	SELECT @inventorygroup, ixc.ingredienteID, i.stack, 1
 	FROM totalIngredientsByCarrito ixc
 	INNER JOIN ingredientes i ON ixc.ingredienteID = i.ingredienteID
-	WHERE carritoID = pcarritoID AND ixc.totalQuantity < i.stack * 0.3;
+	WHERE carritoID = carrito AND ixc.totalQuantity < i.stack * 0.3;
+    
+    CALL RegistrarInventoryLog(@inventorygroup, carrito, copero, pfecha);
                 
 END$$
 DELIMITER ;
 
 DROP PROCEDURE IF EXISTS RegistrarOpen;
 DELIMITER $$
-CREATE PROCEDURE RegistrarOpen(IN pcarritoID INT, IN pfechaVenta DATETIME)
+CREATE PROCEDURE RegistrarOpen(IN copero INT, IN carrito INT, IN pfecha DATETIME)
 BEGIN
-	-- Creacion de los logs
-	INSERT INTO inventoryLogs(posttime,operationType,quantity,ingredientesID,createdAt, computer, username, carritoID) 
-	SELECT pfechaVenta, 2, stack, ingredienteID, pfechaVenta, 'computer1', 'user1', carritoID
-	FROM ingredientes, carritos
-    WHERE carritoID = pcarritoID;
+
+	SET @inventorygroup = UUID();
+	INSERT INTO tmpinventorydata(inventorygroup, ingredienteID, cantidad, operationType) 
+	SELECT @inventorygroup, ingredienteID, stack, 2
+	FROM ingredientes;
+    
+	CALL RegistrarInventoryLog(@inventorygroup, carrito, copero, pfecha);
+     
 END$$
 DELIMITER ;
-
 
 DROP PROCEDURE IF EXISTS RegistrarClose;
 DELIMITER $$
-CREATE PROCEDURE RegistrarClose(IN pcarritoID INT, IN pfechaVenta DATETIME)
+CREATE PROCEDURE RegistrarClose(IN copero INT, IN carrito INT, IN pfecha DATETIME)
 BEGIN
+
+	SET @inventorygroup = UUID();
 	-- Vacia los elementos del carrito
-	INSERT INTO inventoryLogs(posttime,operationType,quantity,ingredientesID,createdAt, computer, username, carritoID) 
-	SELECT pfechaVenta, 3, totalQuantity * -1, ingredienteID, pfechaVenta, 'computer1', 'user1', pcarritoID
+	INSERT INTO tmpinventorydata(inventorygroup, ingredienteID, cantidad, operationType) 
+	SELECT @inventorygroup, ingredienteID, totalQuantity * -1, 3
 	FROM totalIngredientsByCarrito 
-    WHERE carritoID = pcarritoID;
+    WHERE carritoID = carrito;
+    
+    CALL RegistrarInventoryLog(@inventorygroup, carrito, copero, pfecha);
 END$$
 DELIMITER ;
 
 
-
-DROP PROCEDURE IF EXISTS cambioTurno;
+DROP PROCEDURE IF EXISTS Cierre;
 DELIMITER $$
-CREATE PROCEDURE cambioTurno(IN inicioAM DATETIME ,IN inicioPM DATETIME)
+CREATE PROCEDURE Cierre(IN inicioPM DATETIME)
 BEGIN
-	DECLARE vcarritoID INT;
-    DECLARE foundTurn INT;
-	DECLARE vcoperoID1 INT;
-    DECLARE vturnoID INT;
+	DECLARE vcoperoID INT;
+    DECLARE vcarritoID INT;
+    DECLARE horaCierre DATETIME;
 	DECLARE done INT DEFAULT FALSE;
-	DECLARE cur CURSOR FOR SELECT DISTINCT carritoID FROM turnos WHERE horaInicio = inicioAM OR horaInicio = inicioPM;
+	DECLARE cur CURSOR FOR SELECT DISTINCT coperoID, carritoID, HoraFinal FROM turnos WHERE horaInicio = inicioPM;
     DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
-
-    OPEN cur;
+    
+	OPEN cur;
 	readLoop: WHILE NOT done DO
-        FETCH cur INTO vcarritoID;
+        FETCH cur INTO vcoperoID, vcarritoID, horaCierre;
         IF NOT done THEN
-			IF (SELECT COUNT(*) 
-				FROM turnos 
-				WHERE carritoID = vcarritoID 
-				AND horaInicio IN (inicioAM, inicioPM)) = 2 THEN 
-				-- REGISTRAR CAMBIO
-                 SELECT coperoID, turnoID FROM turnos 
-                 WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
-                 ORDER BY coperoID DESC
-                 LIMIT 1
-                 INTO vcoperoID1, vturnoID;
-                
-                 INSERT INTO cajacheck(fecha,checkTypeID,checkStatusID,coperoID1,coperoID2,turnoID,createdAt,computer,username)
-                 SELECT inicioPM, 1, 3, vcoperoID1, t.coperoID, vturnoID, inicioPM, 'computer1', 'user1'
-                 FROM turnos t
-                 WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
-                 ORDER BY coperoID 
-                 LIMIT 1;
-               
-			ELSEIF (SELECT COUNT(*) 
-				FROM turnos 
-				WHERE carritoID = vcarritoID 
-				AND horaInicio = inicioAM) = 1 THEN
-			    CALL RegistrarClose(vcarritoID, inicioPM);
-			ELSE 
-				CALL RegistrarOpen(vcarritoID, inicioPM);
-			END IF;
+			CALL RegistrarClose(vcoperoID, vcarritoID, horaCierre);
 		END IF;
 	END WHILE;
-	CLOSE cur;
+    CLOSE cur;
+    
+END$$
+DELIMITER ;
+
+DROP PROCEDURE IF EXISTS Apertura;
+DELIMITER $$
+CREATE PROCEDURE Apertura(IN inicioAM DATETIME)
+BEGIN
+	DECLARE vcoperoID INT;
+    DECLARE vcarritoID INT;
+	DECLARE done INT DEFAULT FALSE;
+	DECLARE cur CURSOR FOR SELECT DISTINCT coperoID, carritoID FROM turnos WHERE horaInicio = inicioAM;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
+    
+	OPEN cur;
+	readLoop: WHILE NOT done DO
+        FETCH cur INTO vcoperoID, vcarritoID;
+        IF NOT done THEN
+			CALL RegistrarOpen(vcoperoID, vcarritoID, inicioAM);
+		END IF;
+	END WHILE;
+    CLOSE cur;
     
 END$$
 DELIMITER ;
@@ -224,49 +229,8 @@ BEGIN
 END$$
 DELIMITER ;
 
-DROP PROCEDURE IF EXISTS Cierre;
-DELIMITER $$
-CREATE PROCEDURE Cierre(IN inicioPM DATETIME)
-BEGIN
-	DECLARE vcarritoID INT;
-    DECLARE horaCierre DATETIME;
-	DECLARE done INT DEFAULT FALSE;
-	DECLARE cur CURSOR FOR SELECT DISTINCT carritoID, HoraFinal FROM turnos WHERE horaInicio = inicioPM;
-    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
-    
-	OPEN cur;
-	readLoop: WHILE NOT done DO
-        FETCH cur INTO vcarritoID, horaCierre;
-        IF NOT done THEN
-			CALL RegistrarClose(vcarritoID, horaCierre);
-		END IF;
-	END WHILE;
-    CLOSE cur;
-    
-END$$
-DELIMITER ;
 
-DROP PROCEDURE IF EXISTS Apertura;
-DELIMITER $$
-CREATE PROCEDURE Apertura(IN inicioAM DATETIME)
-BEGIN
-	DECLARE vcarritoID INT;
-    DECLARE horaCierre DATETIME;
-	DECLARE done INT DEFAULT FALSE;
-	DECLARE cur CURSOR FOR SELECT DISTINCT carritoID FROM turnos WHERE horaInicio = inicioAM;
-    DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
-    
-	OPEN cur;
-	readLoop: WHILE NOT done DO
-        FETCH cur INTO vcarritoID;
-        IF NOT done THEN
-			CALL RegistrarOpen(vcarritoID, inicioAM);
-		END IF;
-	END WHILE;
-    CLOSE cur;
-    
-END$$
-DELIMITER ;
+
 
 DROP PROCEDURE IF EXISTS Llenado;
 DELIMITER $$
@@ -288,7 +252,9 @@ BEGIN
         DECLARE productosAComprar INT;
         DECLARE cantidadAComprar INT;
         DECLARE vcarritoID INT;
+        DECLARE vcoperoID INT;
         DECLARE vturnoID INT;
+        DECLARE vplayaID INT;
         
         DECLARE vtipopago INT;
         DECLARE vpago INT;
@@ -296,28 +262,25 @@ BEGIN
         
 		DECLARE var INT;
 	
-        SET currentDate = startDate;
-        SET endDate = DATE_ADD(startDate, INTERVAL 2 MONTH);
+        SET currentDate = STR_TO_DATE(CONCAT(DATE_FORMAT(startDate, '%Y-%m-%d'), ' 07:00:00'), '%Y-%m-%d %H:%i:%s');
+        SET endDate = DATE_ADD(startDate, INTERVAL 1 MONTH);
+		SET currentDay = DAYOFWEEK(currentDate);
+		IF currentDay = 1 OR currentDay = 7 THEN
+			SET ventasXdia =  FLOOR(RAND() * (60 - 45 + 1)) + 45;
+		ELSE
+			SET ventasXdia = FLOOR(RAND() * (60 - 10 + 1)) + 10;
+		END IF;
         
         WHILE DATE(currentDate) <= DATE(endDate) DO 
-        
-			SET currentDay = DAYOFWEEK(currentDate);
-			IF currentDay = 1 OR currentDay = 7 THEN
-				SET ventasXdia =  FLOOR(RAND() * (60 - 45 + 1)) + 45;
-            ELSE
-				SET ventasXdia = FLOOR(RAND() * (60 - 10 + 1)) + 10;
-			END IF;
-        
+	
 			SET ventasAM = ventasXdia / 2;
-			SET ventasPM = ventasXdia / 2;
             
-            SET inicioAM = STR_TO_DATE(CONCAT(DATE_FORMAT(currentDate, '%Y-%m-%d'), ' 07:00:00'), '%Y-%m-%d %H:%i:%s');
-            CALL generarTurnos(inicioAM, 3, 1);
-            CALL generarTurnos(inicioAM, 3, 2);
-            CALL generarTurnos(inicioAM, 3, 3);
-			SET currenthora = inicioAM;
+            CALL generarTurnos(currentDate, 3, 1);
+            CALL generarTurnos(currentDate, 3, 2);
+            CALL generarTurnos(currentDate, 3, 3);
+			SET currenthora = currentDate;
 		
-            CALL Apertura(inicioAM);
+            CALL Apertura(currentDate);
             
             WHILE ventasAM >= 0 DO
 				SET totalProdu = 0;
@@ -339,7 +302,7 @@ BEGIN
                 
                 -- Selecciono un turno para que atienda la venta
                 SELECT turnoID FROM turnos
-                WHERE horaInicio = inicioAM
+                WHERE horaInicio = currentDate
                 ORDER BY RAND()
                 LIMIT 1
                 INTO vturnoID;
@@ -351,67 +314,36 @@ BEGIN
 				END IF;
                 
                 -- Registro la venta y valido si hace falta refill
-                CALL RegistrarVenta(vturnoID, currenthora, 1, vtipopago, vpago,  @orden);
-                SELECT carritoID FROM turnos 
-                WHERE turnoID = vturnoID
-                INTO vcarritoID;
-                CALL RegistrarRefill(vcarritoID, DATE_ADD(currenthora, INTERVAL 5 MINUTE));
+				SELECT 
+					IFNULL(co.coperoID, - 1),
+					IFNULL(ca.carritoID, - 1),
+                    IFNULL(pl.playaID, - 1)
+				INTO vcoperoID , vcarritoID , vplayaID
+				FROM turnos t
+				INNER JOIN coperos co ON t.coperoID = co.coperoID
+				INNER JOIN carritos ca ON t.carritoID = ca.carritoID
+				INNER JOIN playas pl ON t.playaID = pl.playaID
+				WHERE t.turnoID = vturnoID;
+                CALL RegistrarVenta(vcoperoID, vcarritoID, vplayaID, currenthora, 1, vtipopago, vpago,  @orden);
+                CALL RegistrarRefill(vcoperoID, vcarritoID, DATE_SUB(currenthora, INTERVAL 5 MINUTE));
 				SET ventasAM = ventasAM - 1;
+                
             END WHILE;
             
-			SET inicioPM = STR_TO_DATE(CONCAT(DATE_FORMAT(currentDate, '%Y-%m-%d'), ' 13:00:00'), '%Y-%m-%d %H:%i:%s');
-            CALL generarTurnos(inicioPM, 3, 1);
-            CALL generarTurnos(inicioPM, 3, 2);
-            CALL generarTurnos(inicioPM, 3, 3);
-            SET currenthora = inicioPM;
-            
-            CALL cambioTurno(inicioAM,inicioPM);
-		
-            WHILE ventasPM >= 0 DO
-				SET totalProdu = 0;
-				-- Genero una orden 
-                SET @orden = UUID();
-                SET productosAComprar = FLOOR(RAND() * 3) + 1;
-                
-				-- Ciclo para elegir productos y sus cantidades
-                WHILE productosAComprar >= 0 DO
-					SET cantidadAComprar = FLOOR(RAND() * 2) + 1;
-                    SET totalProdu = totalProdu + cantidadAComprar;
-					INSERT INTO tmporder(ordergroup, productoID, cantidad)
-					SELECT @orden,  p.productoID, cantidadAComprar
-                    FROM copoproductos p 
-                    ORDER BY RAND()
-                    LIMIT 1;
-                    SET productosAComprar = productosAComprar - 1;
-                END WHILE;
-                
-                -- Selecciono un turno para que atienda la venta
-                SELECT turnoID FROM turnos
-                WHERE horaInicio = inicioPM
-                ORDER BY RAND()
-                LIMIT 1
-                INTO vturnoID;
-                
-                SET currenthora = DATE_ADD(currenthora, INTERVAL FLOOR(RAND() * 300/(ventasXdia/2)) MINUTE);
-                SET vtipopago = FLOOR(RAND() * 4);
-                SET vpago = 0;
-                IF vtipopago = 0 THEN
-					SET vpago = totalProdu * 9000; -- Con esto si o si alcanza
-				END IF;
-                
-                -- Registro la venta y valido si hace falta refill
-                CALL RegistrarVenta(vturnoID, currenthora, 1, vtipopago, vpago,  @orden);
-                SELECT carritoID FROM turnos 
-                WHERE turnoID = vturnoID
-                INTO vcarritoID;
-                CALL RegistrarRefill(vcarritoID, DATE_SUB(currenthora, INTERVAL 5 MINUTE));
-				SET ventasPM = ventasPM - 1;
-            END WHILE;
-            
-            CALL Cierre(inicioPM);
+            CALL Cierre(currentDate);
 	
-			SET currentDate = DATE_ADD(currentDate, INTERVAL 1 DAY);
-
+			IF TIME(currentDate) = '07:00:00' THEN
+				SET currentDate = DATE_ADD(currentDate, INTERVAL 5 HOUR);
+			else
+				SET currentDate = DATE_ADD(currentDate, INTERVAL 19 HOUR);
+				SET currentDay = DAYOFWEEK(currentDate);
+				IF currentDay = 1 OR currentDay = 7 THEN
+					SET ventasXdia =  FLOOR(RAND() * (60 - 45 + 1)) + 45;
+				ELSE
+					SET ventasXdia = FLOOR(RAND() * (60 - 10 + 1)) + 10;
+				END IF;
+			END IF;
+            
 		END WHILE;
 END$$
 DELIMITER ;
