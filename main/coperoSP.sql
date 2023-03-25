@@ -178,19 +178,18 @@ BEGIN
 				WHERE carritoID = vcarritoID 
 				AND horaInicio IN (inicioAM, inicioPM)) = 2 THEN 
 				-- REGISTRAR CAMBIO
-                -- SELECT coperoID, turnoID FROM turnos 
-                -- WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
-                -- ORDER BY coperoID DESC
-                -- LIMIT 1
-                -- INTO vcoperoID1, vturnoID;
+                 SELECT coperoID, turnoID FROM turnos 
+                 WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
+                 ORDER BY coperoID DESC
+                 LIMIT 1
+                 INTO vcoperoID1, vturnoID;
                 
-                -- INSERT INTO cajacheck(fecha,checkTypeID,checkStatusID,coperoID1,coperoID2,turnoID,createdAt,computer,username)
-                -- SELECT inicioPM, 1, 3, vcoperoID1, t.coperoID, vturnoID, inicioPM, 'computer1', 'user1'
-                -- FROM turnos t
-                -- WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
-                -- ORDER BY coperoID 
-                -- LIMIT 1;
-                delete FROM cajacheck;
+                 INSERT INTO cajacheck(fecha,checkTypeID,checkStatusID,coperoID1,coperoID2,turnoID,createdAt,computer,username)
+                 SELECT inicioPM, 1, 3, vcoperoID1, t.coperoID, vturnoID, inicioPM, 'computer1', 'user1'
+                 FROM turnos t
+                 WHERE (horaInicio = inicioAM OR horaInicio = inicioPM) AND carritoID = vcarritoID
+                 ORDER BY coperoID 
+                 LIMIT 1;
                
 			ELSEIF (SELECT COUNT(*) 
 				FROM turnos 
