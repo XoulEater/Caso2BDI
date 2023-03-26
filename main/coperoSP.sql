@@ -4,7 +4,7 @@ CREATE PROCEDURE RegistrarVenta(IN copero INT, IN carrito INT, IN playa INT, IN 
 IN pcomisionID INT, IN ptipopago TINYINT, IN ppago INT, IN pordergroup VARCHAR(36))
 BEGIN
 	-- Variables del pago
-	DECLARE comisionTotal FLOAT;
+	DECLARE comisionTotal FLOAT;	
     DECLARE precioTotal INT;
     DECLARE vuelto1 INT;
     
@@ -72,7 +72,7 @@ BEGIN
 	END IF;
 		
 	IF (playa = -1) THEN
-		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_PLAYA, MESSAGE_TEXT = 'Error de TURNO: pla7ya inválido ';
+		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_PLAYA, MESSAGE_TEXT = 'Error de TURNO: playa inválido ';
 	END IF;
     
     SET @inventorygroup = UUID();
