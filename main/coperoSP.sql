@@ -1,9 +1,6 @@
 
 
 
-
-
-
 DROP PROCEDURE IF EXISTS RegistrarVenta;
 DELIMITER $$
 CREATE PROCEDURE RegistrarVenta(IN copero INT, IN carrito INT, IN playa INT, IN pfechaVenta DATETIME, 
@@ -124,10 +121,10 @@ BEGIN
 
 	SET @inventorygroup = UUID();
 	INSERT INTO tmpinventorydata(inventorygroup, ingredienteID, cantidad, operationType) 
-	SELECT @inventorygroup, ixc.ingredienteID, i.stack, 1
-	FROM totalIngredientsByCarrito ixc
-	INNER JOIN ingredientes i ON ixc.ingredienteID = i.ingredienteID
-	WHERE carritoID = carrito AND ixc.totalQuantity < i.stack * 0.3;
+	SELECT @inventorygroup, ingredienteID, stack, 1
+	FROM totalIngredientsByCarrito 
+	WHERE carritoID = carrito AND totalQuantity < (stack * 0.3) AND dia = DATE(pfecha)
+    AND HOUR(pfecha) >= horario AND HOUR(pfecha) <= (horario + 5);
     
     CALL RegistrarInventoryLog(@inventorygroup, carrito, copero, pfecha);
                 
@@ -153,13 +150,15 @@ DROP PROCEDURE IF EXISTS RegistrarClose;
 DELIMITER $$
 CREATE PROCEDURE RegistrarClose(IN copero INT, IN carrito INT, IN pfecha DATETIME)
 BEGIN
-
 	SET @inventorygroup = UUID();
+    -- ROUND(i.stack * (RAND()*0.2))
+    -- -1000, 10, -990
 	-- Vacia los elementos del carrito
 	INSERT INTO tmpinventorydata(inventorygroup, ingredienteID, cantidad, operationType) 
-	SELECT @inventorygroup, ingredienteID, totalQuantity * -1, 3
-	FROM totalIngredientsByCarrito 
-    WHERE carritoID = carrito;
+    SELECT @inventorygroup, ingredienteID, (totalQuantity * -1) + ROUND(stack * (RAND()*0.1)), 3
+    FROM totalIngredientsByCarrito 
+    WHERE carritoID = carrito AND dia = DATE(pfecha) 
+    AND HOUR(pfecha) >= horario AND HOUR(pfecha) <= (horario + 5);
     
     CALL RegistrarInventoryLog(@inventorygroup, carrito, copero, pfecha);
 END$$
@@ -168,13 +167,13 @@ DELIMITER ;
 
 DROP PROCEDURE IF EXISTS Cierre;
 DELIMITER $$
-CREATE PROCEDURE Cierre(IN inicioPM DATETIME)
+CREATE PROCEDURE Cierre(IN inicio DATETIME)
 BEGIN
 	DECLARE vcoperoID INT;
     DECLARE vcarritoID INT;
     DECLARE horaCierre DATETIME;
 	DECLARE done INT DEFAULT FALSE;
-	DECLARE cur CURSOR FOR SELECT DISTINCT coperoID, carritoID, HoraFinal FROM turnos WHERE horaInicio = inicioPM;
+	DECLARE cur CURSOR FOR SELECT DISTINCT coperoID, carritoID, HoraFinal FROM turnos WHERE horaInicio = inicio;
     DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
     
 	OPEN cur;
@@ -191,19 +190,19 @@ DELIMITER ;
 
 DROP PROCEDURE IF EXISTS Apertura;
 DELIMITER $$
-CREATE PROCEDURE Apertura(IN inicioAM DATETIME)
+CREATE PROCEDURE Apertura(IN inicio DATETIME)
 BEGIN
 	DECLARE vcoperoID INT;
     DECLARE vcarritoID INT;
 	DECLARE done INT DEFAULT FALSE;
-	DECLARE cur CURSOR FOR SELECT DISTINCT coperoID, carritoID FROM turnos WHERE horaInicio = inicioAM;
+	DECLARE cur CURSOR FOR SELECT DISTINCT coperoID, carritoID FROM turnos WHERE horaInicio = inicio;
     DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = TRUE;
     
 	OPEN cur;
 	readLoop: WHILE NOT done DO
         FETCH cur INTO vcoperoID, vcarritoID;
         IF NOT done THEN
-			CALL RegistrarOpen(vcoperoID, vcarritoID, inicioAM);
+			CALL RegistrarOpen(vcoperoID, vcarritoID, inicio);
 		END IF;
 	END WHILE;
     CLOSE cur;
@@ -325,7 +324,7 @@ BEGIN
 				INNER JOIN playas pl ON t.playaID = pl.playaID
 				WHERE t.turnoID = vturnoID;
                 CALL RegistrarVenta(vcoperoID, vcarritoID, vplayaID, currenthora, 1, vtipopago, vpago,  @orden);
-                CALL RegistrarRefill(vcoperoID, vcarritoID, DATE_SUB(currenthora, INTERVAL 5 MINUTE));
+                CALL RegistrarRefill(vcoperoID, vcarritoID, DATE_ADD(currenthora, INTERVAL 1 MINUTE));
 				SET ventasAM = ventasAM - 1;
                 
             END WHILE;
@@ -333,9 +332,9 @@ BEGIN
             CALL Cierre(currentDate);
 	
 			IF TIME(currentDate) = '07:00:00' THEN
-				SET currentDate = DATE_ADD(currentDate, INTERVAL 5 HOUR);
+				SET currentDate = DATE_ADD(currentDate, INTERVAL 6 HOUR);
 			else
-				SET currentDate = DATE_ADD(currentDate, INTERVAL 19 HOUR);
+				SET currentDate = DATE_ADD(currentDate, INTERVAL 18 HOUR);
 				SET currentDay = DAYOFWEEK(currentDate);
 				IF currentDay = 1 OR currentDay = 7 THEN
 					SET ventasXdia =  FLOOR(RAND() * (60 - 45 + 1)) + 45;
@@ -351,17 +350,23 @@ DELIMITER ;
 DROP VIEW IF EXISTS totalIngredientsByCarrito;
 CREATE VIEW totalIngredientsByCarrito AS
     SELECT 
-        carritos.carritoID AS carritoID,
-        ingredientes.ingredienteID AS ingredienteID,
-        SUM(InventoryLogs.quantity) AS totalQuantity
+		DATE(il.posttime) AS dia,
+		CASE 
+            WHEN HOUR(il.posttime) >= 7 AND  HOUR(il.posttime) <= 12 THEN 7 -- [7, 12]
+            ELSE 13
+        END AS horario,
+        c.carritoID AS carritoID,
+        i.ingredienteID AS ingredienteID,
+        SUM(il.quantity) AS totalQuantity,
+        i.stack 
     FROM
-        coperosystem.inventoryLogs
+        inventoryLogs il
             INNER JOIN
-        coperosystem.carritos ON inventoryLogs.carritoID = carritos.carritoID
+        carritos c ON il.carritoID = c.carritoID
             INNER JOIN
-        coperosystem.ingredientes ON inventoryLogs.ingredientesID = ingredientes.ingredienteID
-    WHERE
-        carritos.enable = 1
-            AND ingredientes.enable = 1
-    GROUP BY carritos.carritoID , ingredientes.ingredienteID;
+        ingredientes i ON il.ingredientesID = i.ingredienteID
+    GROUP BY dia, horario, c.carritoID , i.ingredienteID
+    ORDER BY dia, horario,  c.carritoID,  i.ingredienteID;
 
+
+-- WHERE il.posttime < '2023-03-25 13:03:00'
