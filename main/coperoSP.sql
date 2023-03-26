@@ -1,6 +1,3 @@
-
-
-
 DROP PROCEDURE IF EXISTS RegistrarVenta;
 DELIMITER $$
 CREATE PROCEDURE RegistrarVenta(IN copero INT, IN carrito INT, IN playa INT, IN pfechaVenta DATETIME, 
@@ -12,18 +9,16 @@ BEGIN
     DECLARE vuelto1 INT;
     
     DECLARE INVALID_COMISSION INT DEFAULT(53000);
-    DECLARE INVALID_SHIFT_PLAYA INT DEFAULT(53002);
-    DECLARE INVALID_SHIFT_CARRITO INT DEFAULT(53003);
-    DECLARE INVALID_SHIFT_COPERO INT DEFAULT(53004);
+    DECLARE INVALID_SHIFT_PLAYA INT DEFAULT(53001);
+    DECLARE INVALID_SHIFT_CARRITO INT DEFAULT(53002);
+    DECLARE INVALID_SHIFT_COPERO INT DEFAULT(53003);
     
-    
-        
-	DECLARE EXIT HANDLER FOR SQLEXCEPTION -- *******************
+	DECLARE EXIT HANDLER FOR SQLEXCEPTION 
 	BEGIN
 		GET DIAGNOSTICS CONDITION 1 @err_no = MYSQL_ERRNO, @message = MESSAGE_TEXT;
         
         IF (ISNULL(@message)) THEN 
-			SET @message = 'NO SE QUE PONER'; 
+			SET @message = ''; 
         ELSE
             SET @message = CONCAT('Internal error: ', @message);
         END IF;
@@ -31,7 +26,7 @@ BEGIN
         ROLLBACK;
         
         RESIGNAL SET MESSAGE_TEXT = @message;
-	END;-- *******************
+	END;
 		
 	-- Calculo del precio total
 	SELECT 
@@ -68,15 +63,15 @@ BEGIN
 		SET vuelto1 = ppago - precioTotal;
 	END IF;
 		
-	IF (copero IS NULL) THEN
+	IF (copero = -1) THEN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_COPERO, MESSAGE_TEXT = 'Error de TURNO: copero inválido';
 	END IF;
 		
-	IF (carrito IS NULL) THEN
+	IF (carrito = -1) THEN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_CARRITO, MESSAGE_TEXT = 'Error de TURNO: carrio inválido ';
 	END IF;
 		
-	IF (playa IS NULL) THEN
+	IF (playa = -1) THEN
 		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_SHIFT_PLAYA, MESSAGE_TEXT = 'Error de TURNO: pla7ya inválido ';
 	END IF;
     
@@ -90,29 +85,59 @@ BEGIN
     CALL RegistrarInventoryLog(@inventorygroup, carrito, copero, pfechaVenta);
     
     SET autocommit = 0;
+    
 	START TRANSACTION;
     -- Registro de la venta 
 	INSERT INTO Ventas (posttime, tipopago, monto, vuelto, comisionID, coperoID, carritoID, playaID,  ordergroup, montoComision, createdAt, computer, username)
 	VALUES (pfechaVenta, ptipopago, precioTotal, vuelto1, pcomisionID, copero, carrito, playa, pordergroup, comisionTotal, pfechaVenta, "computer1", "user1");
+    COMMIT;
 END$$
 DELIMITER ;
+
+
 
 
 DROP PROCEDURE IF EXISTS RegistrarInventoryLog;
 DELIMITER $$
 CREATE PROCEDURE RegistrarInventoryLog(IN pInventoryGroup VARCHAR(36), IN pcarritoID INT, IN pcoperoID INT, IN pfecha DATETIME)
 BEGIN
+
+    DECLARE INVALID_CARRITO INT DEFAULT(53004);
+    DECLARE INVALID_COPERO INT DEFAULT(53005);
+    
+    	DECLARE EXIT HANDLER FOR SQLEXCEPTION 
+	BEGIN
+		GET DIAGNOSTICS CONDITION 1 @err_no = MYSQL_ERRNO, @message = MESSAGE_TEXT;
+        IF (ISNULL(@message)) THEN 
+			SET @message = ''; 
+        ELSE
+            SET @message = CONCAT('Internal error: ', @message);
+        END IF;
+        ROLLBACK;
         
-	-- METER VALIDACIONES DE pInventoryGroup, coperoID, carritoID
-	-- Creacion de los logs
+        RESIGNAL SET MESSAGE_TEXT = @message;
+	END;
+    
+	IF (pcarritoID = -1) THEN
+		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_CARRITO, MESSAGE_TEXT = 'Error de INVENTARIO: carrito no existe ';
+	END IF;
+		
+	IF (pcoperoID = -1) THEN
+		SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = INVALID_COPERO, MESSAGE_TEXT = 'Error de INVENTARIO: copero no existe ';
+	END IF;
+    
+
+    SET autocommit = 0;
+    
+    -- Creacion de los logs
+    START TRANSACTION;
 	INSERT INTO inventoryLogs(posttime,operationType, quantity ,ingredientesID,createdAt, computer, username, carritoID, coperoID) 
 	SELECT pfecha, operationType, cantidad, ingredienteID, pfecha, 'computer1', 'user1', pcarritoID, pcoperoID
 	FROM tmpinventorydata
 	WHERE inventorygroup = pInventorygroup;
-    
+    COMMIT;
 END$$
 DELIMITER ;
-
 
 DROP PROCEDURE IF EXISTS RegistrarRefill;
 DELIMITER $$
@@ -262,7 +287,7 @@ BEGIN
 		DECLARE var INT;
 	
         SET currentDate = STR_TO_DATE(CONCAT(DATE_FORMAT(startDate, '%Y-%m-%d'), ' 07:00:00'), '%Y-%m-%d %H:%i:%s');
-        SET endDate = DATE_ADD(startDate, INTERVAL 1 MONTH);
+        SET endDate = DATE_ADD(startDate, INTERVAL 6 MONTH);
 		SET currentDay = DAYOFWEEK(currentDate);
 		IF currentDay = 1 OR currentDay = 7 THEN
 			SET ventasXdia =  FLOOR(RAND() * (60 - 45 + 1)) + 45;
