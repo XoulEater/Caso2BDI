@@ -1,6 +1,5 @@
 -- Reto 2 fill database
 USE coperosystem ; 
-
 -- Insertar ingredientes
 INSERT INTO coperosystem.ingredientes (descripcion, medida, stack) VALUES
 ('Jugo de Limón', 'ml', 10000),
