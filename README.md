@@ -18,6 +18,6 @@ Jose Pablo Barquero
 Jose David Fernandez 
 
 *Nota*
-El profesor nos extendió la nota de entrega unos dias
+El profesor nos extendió la fecha de entrega unos dias
 por situaciones especiales, cualquier consulta debido
 a la fecha de entrega comuníquese con el profesor. 
